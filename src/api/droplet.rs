@@ -120,7 +120,40 @@ pub struct Droplet {
 /// Fields which exists inside Droplets.
 pub mod droplet_fields {
 	use chrono::{DateTime, Utc};
+	use serde::de::{self, Deserialize, Deserializer, IntoDeserializer, Visitor};
 	use std::net::{Ipv4Addr, Ipv6Addr};
+	use std::{marker::PhantomData, fmt};
+
+	/// Deserialize wrapper for certain fields, particularly Droplet network
+	/// gateways, that are sometimes literally "<nil>"
+	fn deserialize_nil_or_value<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+	where
+		D: Deserializer<'de>,
+		T: Deserialize<'de>,
+	{
+		struct MaybeNilFromStr<T>(PhantomData<fn() -> T>);
+
+		impl<'de, T> Visitor<'de> for MaybeNilFromStr<T> where T: Deserialize<'de> {
+			type Value = Option<T>;
+
+			fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+				f.write_str("a value or <nil>")
+			}
+
+			fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+			where
+				E: de::Error,
+			{
+				if s == "<nil>" {
+					return Ok(None);
+				}
+
+				Ok(Some(Deserialize::deserialize(s.into_deserializer())?))
+			}
+		}
+
+		deserializer.deserialize_any(MaybeNilFromStr(PhantomData))
+	}
 
 	/// This exists in the `networks` field of a droplet.
 	#[derive(Deserialize, Serialize, Debug, Clone)]
@@ -132,7 +165,8 @@ pub mod droplet_fields {
 	/// These exist in the `networks` field of a droplet.
 	#[derive(Deserialize, Serialize, Debug, Clone)]
 	pub struct NetworkV4 {
-		pub gateway: Ipv4Addr,
+		#[serde(deserialize_with = "deserialize_nil_or_value")]
+		pub gateway: Option<Ipv4Addr>,
 		pub ip_address: Ipv4Addr,
 		pub netmask: Ipv4Addr,
 		/// *Note:* Since `type` is a keyword in Rust `kind` is used instead.
@@ -143,7 +177,8 @@ pub mod droplet_fields {
 	/// These exist in the `networks` field of a droplet.
 	#[derive(Deserialize, Serialize, Debug, Clone)]
 	pub struct NetworkV6 {
-		pub gateway: Ipv6Addr,
+		#[serde(deserialize_with = "deserialize_nil_or_value")]
+		pub gateway: Option<Ipv6Addr>,
 		pub ip_address: Ipv6Addr,
 		pub netmask: usize,
 		/// *Note:* Since `type` is a keyword in Rust `kind` is used instead.
